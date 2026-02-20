@@ -27,7 +27,7 @@ class OllamaApp:
         self.master.columnconfigure(0, weight=1)
         self.master.rowconfigure(4, weight=1) 
 
-        # 1. Secció Superior
+        # 1. Secció Superior: Connexió i Models
         top_frame = tk.LabelFrame(self.master, text="Model & Connection", padx=15, pady=5)
         top_frame.grid(row=0, column=0, sticky="ew", padx=15, pady=2)
         top_frame.columnconfigure(1, weight=1)
@@ -40,6 +40,8 @@ class OllamaApp:
         btn_top_frame.grid(row=0, column=2, padx=5)
         tk.Button(btn_top_frame, text="🔄 Refresh", command=self.load_models, font=('Segoe UI', 8)).pack(side="left", padx=2)
         tk.Button(btn_top_frame, text="🌐 Set URL", command=self.set_url, font=('Segoe UI', 8), bg="#e1e1e1").pack(side="left", padx=2)
+        # REINCORPORACIÓ DEL BOTÓ D'INSTAL·LACIÓ
+        tk.Button(btn_top_frame, text="➕ Install", command=self.install_model, font=('Segoe UI', 8), bg="#d1e7dd").pack(side="left", padx=2)
 
         # 2. Paràmetres
         param_frame = tk.LabelFrame(self.master, text="Parameters", padx=15, pady=5)
@@ -86,7 +88,7 @@ class OllamaApp:
         self.response_text = ScrolledText(response_frame, font=('Consolas', 10), bg="#fcfcfc")
         self.response_text.grid(row=0, column=0, sticky="nsew")
 
-        # 6. Botons d'Acció (Botó de generació guardat en una variable per poder-lo desactivar)
+        # 6. Botons d'Acció
         action_btn_frame = tk.Frame(self.master)
         action_btn_frame.grid(row=5, column=0, pady=5)
         self.gen_button = tk.Button(action_btn_frame, text="GENERATE TEXT", command=self.send_prompt, 
@@ -121,11 +123,28 @@ class OllamaApp:
             if models: self.model_name.set(models[0])
         except Exception: pass
 
+    # NOVA FUNCIÓ PER DESCARREGAR MODELS
+    def install_model(self):
+        m_name = simpledialog.askstring("Download model", "Enter the name of the model to download (ex: llama3):")
+        if m_name:
+            def _inst():
+                try:
+                    # Desactivem el botó de generació temporalment per evitar conflictes
+                    self.gen_button.config(state="disabled", text="DOWNLOADING MODEL...")
+                    self.get_client().pull(m_name)
+                    messagebox.showinfo("Success", f"Model '{m_name}' installed correctly.")
+                    self.load_models()
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to install model: {str(e)}")
+                finally:
+                    self.gen_button.config(state="normal", text="GENERATE TEXT")
+            
+            threading.Thread(target=_inst, daemon=True).start()
+
     def send_prompt(self):
         model = self.model_name.get()
         if not model: return
         
-        # Desactivem el botó i canviem el text
         self.gen_button.config(state="disabled", text="GENERATING...", bg="#9e9e9e")
         
         messages = []
@@ -156,7 +175,6 @@ class OllamaApp:
             except Exception as e:
                 messagebox.showerror("Error", str(e))
             finally:
-                # Re-activem el botó quan acaba la tasca (sigui èxit o error)
                 self.gen_button.config(state="normal", text="GENERATE TEXT", bg="#4CAF50")
 
         threading.Thread(target=_gen, daemon=True).start()
