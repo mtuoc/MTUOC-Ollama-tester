@@ -1,203 +1,103 @@
 import tkinter as tk
-from tkinter import simpledialog, messagebox, ttk
-from tkinter.scrolledtext import ScrolledText
+from tkinter import messagebox, scrolledtext
 import threading
-import requests
-import ollama
-import re
-import json
+from ollama_engine import OllamaModelEngine
 
-class OllamaApp:
-    def __init__(self, master):
-        self.master = master
+class OllamaAppGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("MTUOC Ollama Tester")
+        self.root.geometry("1100x1200")
         
-        # Variables de control corregides
-        self.ollama_url = tk.StringVar(value="http://localhost:11434")
-        self.model_name = tk.StringVar()
-        self.as_json = tk.BooleanVar(value=False)
-
-        # Configuració d'estils
-        self.style = ttk.Style()
-        self.master.option_add('*TCombobox*Listbox.font', ('Segoe UI', 10))
-        
+        # Carreguem el motor amb el fitxer de configuració unificat
+        self.engine = OllamaModelEngine("config.yaml")
         self.setup_ui()
-        self.load_models()
+        
+        # Iniciem la connexió i verificació de model en segon pla
+        threading.Thread(target=self.startup_sequence, daemon=True).start()
+
+    def startup_sequence(self):
+        # El motor ara gestiona si el servidor està running i el pull del model
+        if self.engine.initialize_client(self.update_button_status):
+            self.engine.ensure_model_exists(self.update_button_status)
 
     def setup_ui(self):
-        self.master.columnconfigure(0, weight=1)
-        self.master.rowconfigure(4, weight=1) 
+        main_frame = tk.Frame(self.root, padx=20, pady=10)
+        main_frame.pack(fill="both", expand=True)
 
-        # 1. Secció Superior: Connexió i Models
-        top_frame = tk.LabelFrame(self.master, text="Model & Connection", padx=15, pady=5)
-        top_frame.grid(row=0, column=0, sticky="ew", padx=15, pady=2)
-        top_frame.columnconfigure(1, weight=1)
-
-        tk.Label(top_frame, text="Model:", font=('Segoe UI', 9, 'bold')).grid(row=0, column=0, padx=5, sticky="w")
-        self.model_combo = ttk.Combobox(top_frame, textvariable=self.model_name, font=('Segoe UI', 10))
-        self.model_combo.grid(row=0, column=1, padx=5, sticky="ew")
-        
-        btn_top_frame = tk.Frame(top_frame)
-        btn_top_frame.grid(row=0, column=2, padx=5)
-        tk.Button(btn_top_frame, text="🔄 Refresh", command=self.load_models, font=('Segoe UI', 8)).pack(side="left", padx=2)
-        tk.Button(btn_top_frame, text="🌐 Set URL", command=self.set_url, font=('Segoe UI', 8), bg="#e1e1e1").pack(side="left", padx=2)
-        # REINCORPORACIÓ DEL BOTÓ D'INSTAL·LACIÓ
-        tk.Button(btn_top_frame, text="➕ Install", command=self.install_model, font=('Segoe UI', 8), bg="#d1e7dd").pack(side="left", padx=2)
-
-        # 2. Paràmetres
-        param_frame = tk.LabelFrame(self.master, text="Parameters", padx=15, pady=5)
-        param_frame.grid(row=1, column=0, sticky="ew", padx=15, pady=2)
-        self.params = {
-            "temp": ("temperature", tk.DoubleVar(value=0.9)),
-            "p": ("top_p", tk.DoubleVar(value=0.9)),
-            "k": ("top_k", tk.IntVar(value=40)),
-            "pen": ("repeat_penalty", tk.DoubleVar(value=1.1)),
-            "pred": ("num_predict", tk.IntVar(value=-1)),
-            "seed": ("seed", tk.StringVar(value=""))
-        }
-        for i, (short, (long_name, var)) in enumerate(self.params.items()):
-            tk.Label(param_frame, text=f"{long_name}:", font=('Segoe UI', 8)).grid(row=0, column=i*2, padx=(5, 2), sticky="w")
-            tk.Entry(param_frame, textvariable=var, width=6, font=('Segoe UI', 9)).grid(row=0, column=i*2+1, sticky="w")
-        tk.Checkbutton(param_frame, text="JSON", variable=self.as_json, font=('Segoe UI', 8, 'bold')).grid(row=0, column=12, padx=15)
-
-        # 3. Rols (System/Assistant)
-        role_frame = tk.Frame(self.master)
-        role_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=2)
+        # Secció de Rols (System i Assistant)
+        role_frame = tk.Frame(main_frame)
+        role_frame.pack(fill="x", pady=5)
         role_frame.columnconfigure(0, weight=1); role_frame.columnconfigure(1, weight=1)
+
+        sys_f = tk.LabelFrame(role_frame, text=" System Role ", padx=5, pady=5)
+        sys_f.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        self.system_txt = scrolledtext.ScrolledText(sys_f, height=4, font=("Consolas", 9))
+        self.system_txt.pack(fill="both")
+
+        ast_f = tk.LabelFrame(role_frame, text=" Assistant Context ", padx=5, pady=5)
+        ast_f.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        self.assistant_txt = scrolledtext.ScrolledText(ast_f, height=4, font=("Consolas", 9))
+        self.assistant_txt.pack(fill="both")
+
+        # User Prompt
+        tk.Label(main_frame, text="USER PROMPT", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10, 0))
+        self.prompt_in = scrolledtext.ScrolledText(main_frame, height=8, font=("Consolas", 11))
+        self.prompt_in.pack(fill="both", pady=5)
+
+        # Botó dinàmic d'estat
+        self.btn_gen = tk.Button(main_frame, text="CONNECTING...", bg="#9E9E9E", fg="white", 
+                                 state="disabled", font=("Arial", 11, "bold"), pady=12, command=self.on_generate)
+        self.btn_gen.pack(fill="x", pady=10)
+
+        # Resposta Bruta i Regex
+        tk.Label(main_frame, text="RAW RESPONSE").pack(anchor="w")
+        self.raw_out = scrolledtext.ScrolledText(main_frame, height=8, bg="#F5F5F5", font=("Consolas", 10))
+        self.raw_out.pack(fill="both", pady=5)
+
+        reg_frame = tk.LabelFrame(main_frame, text=" Regex Filter ", padx=10, pady=10)
+        reg_frame.pack(fill="x", pady=10)
+        self.reg_entry = tk.Entry(reg_frame, font=("Consolas", 11))
+        self.reg_entry.pack(fill="x")
+        # Obtenim el regex del nou bloc prompt_settings
+        self.reg_entry.insert(0, self.engine.config.get('prompt_settings', {}).get('regex_pattern', ""))
+
+        tk.Label(main_frame, text="FINAL RESULT", fg="#2E7D32", font=("Arial", 10, "bold")).pack(anchor="w")
+        self.final_out = scrolledtext.ScrolledText(main_frame, height=6, bg="#F1F8E9", font=("Consolas", 12, "bold"))
+        self.final_out.pack(fill="both", expand=True, pady=5)
+
+    def update_button_status(self, status):
+        self.root.after(0, self._update_ui, status)
+
+    def _update_ui(self, status):
+        if status == "READY":
+            model = self.engine.config['ollama_settings'].get('model', 'model')
+            self.btn_gen.config(state="normal", text=f"GENERATE WITH {model.upper()}", bg="#4CAF50")
+        elif "DOWNLOADING" in status or "PULLING" in status or "CONNECTANT" in status:
+            self.btn_gen.config(state="disabled", text=status, bg="#2196F3")
+        elif "ERROR" in status:
+            self.btn_gen.config(state="disabled", text=status, bg="#F44336")
+        else:
+            self.btn_gen.config(state="disabled", text=status, bg="#9E9E9E")
+
+    def on_generate(self):
+        prompt = self.prompt_in.get("1.0", "end").strip()
+        system = self.system_txt.get("1.0", "end").strip()
+        assistant = self.assistant_txt.get("1.0", "end").strip()
+        regex = self.reg_entry.get().strip()
         
-        sys_f = tk.LabelFrame(role_frame, text="System Role", padx=5, pady=2)
-        sys_f.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
-        self.system_text = ScrolledText(sys_f, height=3, font=('Consolas', 9))
-        self.system_text.pack(fill="both")
+        if not prompt: return
 
-        ast_f = tk.LabelFrame(role_frame, text="Assistant Context", padx=5, pady=2)
-        ast_f.grid(row=0, column=1, sticky="nsew", padx=(2, 0))
-        self.assistant_text = ScrolledText(ast_f, height=3, font=('Consolas', 9))
-        self.assistant_text.pack(fill="both")
-
-        # 4. User Prompt (Ocupant tot l'ample)
-        usr_f = tk.LabelFrame(self.master, text="User Prompt", padx=15, pady=5)
-        usr_f.grid(row=3, column=0, sticky="ew", padx=15, pady=2)
-        usr_f.columnconfigure(0, weight=1)
-        self.user_text = ScrolledText(usr_f, height=4, font=('Consolas', 10))
-        self.user_text.grid(row=0, column=0, sticky="ew")
-
-        # 5. Response
-        response_frame = tk.LabelFrame(self.master, text="Response", padx=15, pady=5)
-        response_frame.grid(row=4, column=0, sticky="nsew", padx=15, pady=2)
-        response_frame.columnconfigure(0, weight=1); response_frame.rowconfigure(0, weight=1)
-        self.response_text = ScrolledText(response_frame, font=('Consolas', 10), bg="#fcfcfc")
-        self.response_text.grid(row=0, column=0, sticky="nsew")
-
-        # 6. Botons d'Acció
-        action_btn_frame = tk.Frame(self.master)
-        action_btn_frame.grid(row=5, column=0, pady=5)
-        self.gen_button = tk.Button(action_btn_frame, text="GENERATE TEXT", command=self.send_prompt, 
-                                    bg="#4CAF50", fg="white", font=('Segoe UI', 10, 'bold'), padx=30, pady=8)
-        self.gen_button.pack(side="left", padx=10)
-        tk.Button(action_btn_frame, text="Clear Everything", command=self.clear_all, font=('Segoe UI', 9), padx=15).pack(side="left", padx=10)
-
-        # 7. Regex
-        regex_f = tk.LabelFrame(self.master, text="Post-processing (Regex)", padx=15, pady=5)
-        regex_f.grid(row=6, column=0, sticky="ew", padx=15, pady=5)
-        regex_f.columnconfigure(1, weight=1)
-        tk.Label(regex_f, text="Pattern:", font=('Segoe UI', 8, 'bold')).grid(row=0, column=0)
-        self.regexp_entry = tk.Entry(regex_f, font=('Consolas', 9))
-        self.regexp_entry.grid(row=0, column=1, sticky="ew", padx=5)
-        tk.Button(regex_f, text="Apply Filter", command=self.apply_regexp, font=('Segoe UI', 8)).grid(row=0, column=2)
-        self.regexp_result = ScrolledText(regex_f, height=3, bg="#f3f3f3", font=('Consolas', 9))
-        self.regexp_result.grid(row=1, column=0, columnspan=3, sticky="ew", pady=5)
-
-    def set_url(self):
-        new_url = simpledialog.askstring("Ollama URL", "URL del servidor:", initialvalue=self.ollama_url.get())
-        if new_url:
-            self.ollama_url.set(new_url)
-            self.load_models()
-
-    def get_client(self):
-        return ollama.Client(host=self.ollama_url.get())
-
-    def load_models(self):
-        try:
-            models = [m.model for m in self.get_client().list().models]
-            self.model_combo['values'] = models
-            if models: self.model_name.set(models[0])
-        except Exception: pass
-
-    # NOVA FUNCIÓ PER DESCARREGAR MODELS
-    def install_model(self):
-        m_name = simpledialog.askstring("Download model", "Enter the name of the model to download (ex: llama3):")
-        if m_name:
-            def _inst():
-                try:
-                    # Desactivem el botó de generació temporalment per evitar conflictes
-                    self.gen_button.config(state="disabled", text="DOWNLOADING MODEL...")
-                    self.get_client().pull(m_name)
-                    messagebox.showinfo("Success", f"Model '{m_name}' installed correctly.")
-                    self.load_models()
-                except Exception as e:
-                    messagebox.showerror("Error", f"Failed to install model: {str(e)}")
-                finally:
-                    self.gen_button.config(state="normal", text="GENERATE TEXT")
+        def run():
+            self.btn_gen.config(state="disabled", text="GENERATING...", bg="#FF9800")
+            # El mètode generate ara rep els rols i el regex opcional
+            raw, final = self.engine.generate(prompt, system, assistant, override_regex=regex)
             
-            threading.Thread(target=_inst, daemon=True).start()
+            self.raw_out.delete("1.0", "end"); self.raw_out.insert("end", raw)
+            self.final_out.delete("1.0", "end"); self.final_out.insert("end", final)
+            self.update_button_status("READY")
 
-    def send_prompt(self):
-        model = self.model_name.get()
-        if not model: return
-        
-        self.gen_button.config(state="disabled", text="GENERATING...", bg="#9e9e9e")
-        
-        messages = []
-        if self.system_text.get("1.0", "end").strip():
-            messages.append({"role": "system", "content": self.system_text.get("1.0", "end").strip()})
-        if self.assistant_text.get("1.0", "end").strip():
-            messages.append({"role": "assistant", "content": self.assistant_text.get("1.0", "end").strip()})
-        
-        u_content = self.user_text.get("1.0", "end").strip()
-        if not u_content: 
-            self.gen_button.config(state="normal", text="GENERATE TEXT", bg="#4CAF50")
-            return
-        messages.append({"role": "user", "content": u_content})
-
-        opts = {k: v[1].get() for k, v in self.params.items() if k != 'seed'}
-        s_v = self.params['seed'][1].get()
-        if s_v.strip().isdigit(): opts['seed'] = int(s_v)
-
-        def _gen():
-            try:
-                resp = self.get_client().chat(model=model, messages=messages, options=opts)
-                self.response_text.delete("1.0", "end")
-                if self.as_json.get():
-                    data = resp.model_dump() if hasattr(resp, "model_dump") else dict(resp)
-                    self.response_text.insert("end", json.dumps(data, indent=2))
-                else:
-                    self.response_text.insert("end", resp['message']['content'])
-            except Exception as e:
-                messagebox.showerror("Error", str(e))
-            finally:
-                self.gen_button.config(state="normal", text="GENERATE TEXT", bg="#4CAF50")
-
-        threading.Thread(target=_gen, daemon=True).start()
-
-    def clear_all(self):
-        for w in [self.system_text, self.user_text, self.assistant_text, self.response_text, self.regexp_result]:
-            w.delete("1.0", "end")
-        self.regexp_entry.delete(0, "end")
-
-    def apply_regexp(self):
-        pat = self.regexp_entry.get().strip()
-        txt = self.response_text.get("1.0", "end").strip()
-        self.regexp_result.delete("1.0", "end")
-        if not pat: return
-        try:
-            matches = re.findall(pat, txt, re.MULTILINE)
-            out = "\n".join([" | ".join(map(str, m)) if isinstance(m, tuple) else str(m) for m in matches])
-            self.regexp_result.insert("end", out or "[Sense coincidències]")
-        except Exception as e: self.regexp_result.insert("end", f"Error: {e}")
+        threading.Thread(target=run, daemon=True).start()
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    root.title("MTUOC Ollama Tester Pro")
-    root.geometry("1700x1200")
-    OllamaApp(root)
-    root.mainloop()
+    root = tk.Tk(); app = OllamaAppGUI(root); root.mainloop()

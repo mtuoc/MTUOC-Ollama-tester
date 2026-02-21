@@ -1,0 +1,26 @@
+# --- OLLAMA SERVER & MODEL SETTINGS ---
+ollama_settings:
+  model: "mistral"                   # Name of the model to use (e.g., llama3, mistral, gemma)
+  host: "http://localhost:11434"    # URL where the Ollama server is running
+  timeout: 5                         # Connection timeout in seconds
+
+# --- LLM GENERATION PARAMETERS (Ollama Options) ---
+# These parameters control the behavior of the text generation process
+generation_params:
+  temperature: 0.0      # 0.0 is deterministic (greedy). Higher values (up to 1.0) are more creative
+  num_predict: 128      # Maximum number of tokens to generate (-1 for infinite)
+  num_ctx: 2048         # Size of the context window (model memory)
+  repeat_penalty: 1.2   # Penalty to prevent the model from repeating the same tokens
+  top_k: 40             # Limits the next token selection to the top K most likely tokens
+  top_p: 0.9            # Nucleus sampling: filters tokens by cumulative probability
+  seed: 42              # Set a seed for reproducible results
+  stop: ["\n", "###"]   # List of sequences that will stop the generation process
+
+# --- LLM PROMPT AND RESPONSE PARSING ---
+prompt_settings:
+  # If the model returns a JSON string, specify the key to extract. Use "None" otherwise.
+  json_key: "None"
+  
+  # Regular expression to clean the output (e.g., taking only the first line)
+  # '^(.+?)(?=\\n|\n|$)' extracts everything until the first newline
+  regex_pattern: '^(.+?)(?=\\n|\n|$)'
